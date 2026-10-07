@@ -51,9 +51,12 @@ if "AAF2" in df_raw.columns:
 # 抽出した列のみのマスターを作成
 filtered_questions = {k: questions[k] for k in target_cols if k in questions}
 
-print("3. 軽量ParquetとマスターJSONを書き出し中...")
-df_raw.to_parquet("app_data.parquet", index=False, compression="snappy")
+# preprocess.py の最後
+print("3. Gzip圧縮CSVとマスターJSONを書き出し中...")
+# compression='gzip' を指定するだけで自動で軽量圧縮されます
+df_raw.to_csv("app_data.csv.gz", index=False, compression="gzip")
+
 with open("question_master.json", "w", encoding="utf-8") as f:
   json.dump(filtered_questions, f, ensure_ascii=False, indent=2)
 
-print("✅ 完了しました！")
+print("✅ 完了しました！ app_data.csv.gz を作成しました。")

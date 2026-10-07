@@ -38,7 +38,9 @@ if not check_password():
 # --- 2. データ読み込み ---
 @st.cache_data
 def load_data():
-  df = pd.read_parquet("app_data.parquet")
+  df = pd.read_csv("app_data.csv.gz", dtype=str, low_memory=False)
+  if "AAF2" in df.columns:
+    df["AAF2"] = pd.to_numeric(df["AAF2"], errors="coerce").fillna(0)
   with open("question_master.json", "r", encoding="utf-8") as f:
     questions = json.load(f)
   return df, questions
