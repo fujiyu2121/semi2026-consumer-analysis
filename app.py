@@ -40,208 +40,171 @@ if not check_password():
 def load_data():
   df = pd.read_parquet("app_data.parquet")
   with open("question_master.json", "r", encoding="utf-8") as f:
-    questions = json.load(f)
-  return df, questions
+    master = json.load(f)
+  return df, master
 
 
 try:
-  df, questions = load_data()
+  df, master = load_data()
+  categories = master["categories"]
+  cat_map = master["category_map"]
+  questions = master["questions"]
 except Exception as e:
   st.error(f"データの読み込みに失敗しました: {e}")
   st.stop()
 
 total_n = len(df)
-all_q_keys = list(questions.keys())
-display_q_map = {q: f"{info['title']} ({q})" for q, info in questions.items()}
-
-
-# 設問検索用関数（0件ヒット時も安全に全件の一部を返す）
-def search_questions(keyword):
-  if not keyword or not keyword.strip():
-    return all_q_keys[:50]
-  kw = keyword.strip().lower()
-  hits = [k for k, v in questions.items() if kw in v["title"].lower()]
-  if not hits:
-    return []
-  return hits
-
 
 st.title("🥤 ターゲット分析 & クロス集計")
 st.caption(f"母集団全体 N = {total_n:,}人 ｜ ログイン中: {st.session_state.user_name}")
 
-# --- 3. ターゲット設定（4変数以上） ---
-st.subheader("🎯 1. ターゲット条件の設定")
+# --- 3. ターゲット設定（自由な3段階ドリルダウン × 4条件） ---
+st.subheader("🎯 1. ターゲット条件の設定（4変数）")
+st.write(
+    "大分類を選んでから設問を絞り込み、該当する回答を選択してください。"
+)
 
 target_mask = pd.Series(True, index=df.index)
 filter_summary = []
 
-# 【条件①：性別】
-q1 = "AAF1" if "AAF1" in questions else all_q_keys[0]
-opts1 = questions[q1].get("choices", {})
-val1 = st.multiselect(
-    f"条件①: {questions[q1]['title']}",
-    options=list(opts1.keys()),
-    format_func=lambda x: opts1.get(x, x),
-    default=["2"] if "2" in opts1 else [],
-    key="val1",
-)
-if val1:
-  target_mask &= df[q1].astype(str).isin(val1)
-  filter_summary.append(
-      f"{questions[q1]['title']}: {[opts1.get(v, v) for v in val1]}"
+# 条件入力コンポーネント（3段階ドリルダウン関数）
+def render_condition_selector(idx):
+  st.markdown(f"#### 【条件 {idx}】")
+  c1, c2 = st.columns(2)
+
+  with c1:
+    selected_cat = st.selectbox(
+        f"① 大分類を選択 (条件{idx})",
+        options=categories,
+        key=f"cat_{idx}",
+    )
+
+  available_qs = cat_map.get(selected_cat, [])
+  if not available_qs:
+    st.warning("この分類に含まれる有効な設問がありません。")
+    return None, []
+
+  with c2:
+    selected_q = st.selectbox(
+        f"② 質問を選択 (条件{idx})",
+        options=available_qs,
+        format_func=lambda q: f"{questions[q]['title']} ({q})",
+        key=f"q_{idx}_{selected_cat}",  # 大分類変更で質問選択を安全に連動
+    )
+
+  q_info = questions[selected_q]
+  choices = q_info.get("choices", {})
+
+  if not choices:
+    st.info("この質問には選択肢情報がありません。")
+    return None, []
+
+  # 選択肢のマルチセレクト
+  selected_vals = st.multiselect(
+      f"③ 該当する回答を選択（「{q_info['title']}」）",
+      options=list(choices.keys()),
+      format_func=lambda c: choices.get(c, c),
+      key=f"val_{idx}_{selected_q}",
   )
 
-# 【条件②：年齢】
-if "AAF2" in df.columns:
-  st.markdown(f"**条件②: {questions.get('AAF2', {}).get('title', '年齢')}**")
-  age_range = st.slider("対象年齢の範囲", 15, 79, (20, 29), key="age_slider")
-  target_mask &= (df["AAF2"] >= age_range[0]) & (df["AAF2"] <= age_range[1])
-  filter_summary.append(f"年齢: {age_range[0]}〜{age_range[1]}歳")
+  return selected_q, selected_vals
 
-# 【条件③：属性・ライフスタイル】
-st.markdown("**条件③: 属性・ライフスタイル（設問を検索）**")
-kw3 = st.text_input(
-    "質問キーワード（例: 未既婚, 職業, 世帯）", value="未既婚", key="kw3"
-)
-matched3 = search_questions(kw3)
-if not matched3:
-  st.warning(f"「{kw3}」に一致する設問が見つかりません。別の単語をお試しください。")
-  matched3 = all_q_keys[:20]
 
-q3 = st.selectbox(
-    "質問を選択",
-    matched3,
-    format_func=lambda x: display_q_map.get(x, x),
-    key="q3",
-)
-opts3 = questions[q3].get("choices", {})
-val3 = st.multiselect(
-    f"「{questions[q3]['title']}」の該当項目",
-    options=list(opts3.keys()),
-    format_func=lambda x: opts3.get(x, x),
-    key=f"val3_{q3}",  # 設問が変わると選択肢も安全にリセット
-)
-if val3:
-  target_mask &= df[q3].astype(str).isin(val3)
-  filter_summary.append(
-      f"{questions[q3]['title']}: {[opts3.get(v, v) for v in val3]}"
-  )
+# 4つの条件をループ生成
+for i in range(1, 5):
+  q_code, vals = render_condition_selector(i)
+  if q_code and vals and q_code in df.columns:
+    target_mask &= df[q_code].astype(str).isin(vals)
+    choice_labels = [questions[q_code]["choices"].get(v, v) for v in vals]
+    filter_summary.append(
+        f"{questions[q_code]['title']}: {', '.join(choice_labels)}"
+    )
 
-# 【条件④：行動・価値観・利用頻度】
-st.markdown("**条件④: 行動・価値観（設問を検索）**")
-kw4 = st.text_input(
-    "質問キーワード（例: コンビニ, 美容, 健康, SNS）", value="コンビニ", key="kw4"
-)
-matched4 = search_questions(kw4)
-if not matched4:
-  st.warning(f"「{kw4}」に一致する設問が見つかりません。別の単語をお試しください。")
-  matched4 = all_q_keys[:20]
-
-q4 = st.selectbox(
-    "質問を選択",
-    matched4,
-    format_func=lambda x: display_q_map.get(x, x),
-    key="q4",
-)
-opts4 = questions[q4].get("choices", {})
-val4 = st.multiselect(
-    f"「{questions[q4]['title']}」の該当項目",
-    options=list(opts4.keys()),
-    format_func=lambda x: opts4.get(x, x),
-    key=f"val4_{q4}",
-)
-if val4:
-  target_mask &= df[q4].astype(str).isin(val4)
-  filter_summary.append(
-      f"{questions[q4]['title']}: {[opts4.get(v, v) for v in val4]}"
-  )
-
-# ターゲット規模の表示
+# ターゲット規模の計算と表示
 target_n = int(target_mask.sum())
 target_ratio = (target_n / total_n) * 100 if total_n > 0 else 0
 
+st.divider()
 st.info(
     f"📊 **設定したターゲットの規模**\n\n"
     f"・対象人数: **{target_n:,} 人** ｜ 全体比率: **{target_ratio:.2f}%**"
 )
 
-# --- 4. クロス集計・仮説検証 ---
+# --- 4. クロス集計・仮説検証（こちらも3段階ドリルダウンに統一） ---
 st.divider()
 st.subheader("🔍 2. 検証する質問とのクロス集計")
-
-kw_verify = st.text_input(
-    "検証したい設問をキーワード検索（例: 美容, 買物, 飲料, 健康, 新商品）",
-    value="美容",
-    key="kw_verify",
+st.write(
+    "比較・検証したい質問を大分類から選んでください（ターゲット層 vs"
+    " その他全体）。"
 )
-matched_verify = search_questions(kw_verify)
-if not matched_verify:
-  st.warning(
-      f"「{kw_verify}」に一致する設問が見つかりません。代表設問を表示します。"
+
+v_col1, v_col2 = st.columns(2)
+with v_col1:
+  verify_cat = st.selectbox(
+      "① 検証質問の大分類", options=categories, key="verify_cat"
   )
-  matched_verify = all_q_keys[:30]
 
-target_q = st.selectbox(
-    "検証する質問を選択",
-    matched_verify,
-    format_func=lambda x: display_q_map.get(x, x),
-    key="verify_q",
-)
-
-q_info = questions[target_q]
-q_title = q_info["title"]
-choices = q_info.get("choices", {})
+verify_available_qs = cat_map.get(verify_cat, [])
+with v_col2:
+  verify_q = st.selectbox(
+      "② 検証する質問",
+      options=verify_available_qs,
+      format_func=lambda q: f"{questions[q]['title']} ({q})",
+      key=f"verify_q_{verify_cat}",
+  )
 
 chi2, p = 0.0, 1.0
+q_title = ""
 
-if target_q in df.columns and len(choices) > 0 and target_n > 0:
-  sub_df = pd.DataFrame({
-      "グループ": np.where(target_mask, "ターゲット", "その他全体"),
-      "回答": df[target_q].astype(str),
-  }).dropna()
+if verify_q and verify_q in df.columns:
+  q_info = questions[verify_q]
+  q_title = q_info["title"]
+  choices = q_info.get("choices", {})
 
-  # 選択肢マスターに定義された回答のみに限定
-  sub_df = sub_df[sub_df["回答"].isin(choices.keys())]
+  if len(choices) > 0 and target_n > 0:
+    sub_df = pd.DataFrame({
+        "グループ": np.where(target_mask, "ターゲット", "その他全体"),
+        "回答": df[verify_q].astype(str),
+    }).dropna()
 
-  if len(sub_df) > 0 and len(sub_df["回答"].unique()) > 1:
-    sub_df["回答ラベル"] = sub_df["回答"].map(choices)
-    ct = pd.crosstab(sub_df["グループ"], sub_df["回答ラベル"])
-    ct_pct = (
-        pd.crosstab(sub_df["グループ"], sub_df["回答ラベル"], normalize="index")
-        * 100
-    )
+    sub_df = sub_df[sub_df["回答"].isin(choices.keys())]
 
-    st.write(f"**【クロス集計結果: {q_title}（比率 %）】**")
-    st.dataframe(ct_pct.round(1))
-
-    # カイ二乗検定（例外防止）
-    try:
-      chi2, p, dof, expected = chi2_contingency(ct)
-      col_m1, col_m2, col_m3 = st.columns(3)
-      col_m1.metric("カイ二乗値 (χ²)", f"{chi2:.2f}")
-      col_m2.metric("p値", f"{p:.4e}" if p < 0.0001 else f"{p:.4f}")
-      col_m3.metric(
-          "有意差の有無",
-          "有意差あり (p<0.05)" if p < 0.05 else "有意差なし",
-          delta="有意" if p < 0.05 else "なし",
+    if len(sub_df) > 0 and len(sub_df["回答"].unique()) > 1:
+      sub_df["回答ラベル"] = sub_df["回答"].map(choices)
+      ct = pd.crosstab(sub_df["グループ"], sub_df["回答ラベル"])
+      ct_pct = (
+          pd.crosstab(
+              sub_df["グループ"], sub_df["回答ラベル"], normalize="index"
+          )
+          * 100
       )
-    except Exception as e:
-      st.info(
-          "※度数分布の偏りによりカイ二乗検定を実行できませんでした（十分なサンプル数または回答のばらつきが必要です）。"
-      )
+
+      st.write(f"**【クロス集計結果: {q_title}（比率 %）】**")
+      st.dataframe(ct_pct.round(1))
+
+      try:
+        chi2, p, dof, expected = chi2_contingency(ct)
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("カイ二乗値 (χ²)", f"{chi2:.2f}")
+        col_m2.metric("p値", f"{p:.4e}" if p < 0.0001 else f"{p:.4f}")
+        col_m3.metric(
+            "有意差の有無",
+            "有意差あり (p<0.05)" if p < 0.05 else "有意差なし",
+            delta="有意" if p < 0.05 else "なし",
+        )
+      except Exception as e:
+        st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
+    else:
+      st.warning("有効な回答データが不足しているため、クロス集計できません。")
   else:
-    st.warning("有効な回答データが不足しているため、クロス集計できません。")
-else:
-  st.warning(
-      "ターゲット対象者が0人、または設問の選択肢情報が存在しません。条件を見直してください。"
-  )
+    st.warning("ターゲット対象者が0人、または選択肢情報が存在しません。")
 
 # --- 5. スプレッドシート保存 ---
 st.divider()
 st.subheader("📋 3. 班のスプレッドシートに保存")
 GAS_URL = "ここにGASのウェブアプリURLを貼り付け"
 
-target_desc = " ＆ ".join(filter_summary) if filter_summary else "全数"
+target_desc = " ＆ ".join(filter_summary) if filter_summary else "全数（条件なし）"
 
 if st.button("この分析結果をスプレッドシートに追記する"):
   if "ここにGAS" in GAS_URL:
