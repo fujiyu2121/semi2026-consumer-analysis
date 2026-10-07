@@ -180,7 +180,7 @@ if verify_q and verify_q in df_active.columns:
 # --- 6. スプレッドシート保存 ---
 st.divider()
 st.subheader("📋 3. 班のスプレッドシートに保存")
-GAS_URL = "ここにGASのウェブアプリURLを貼り付け"
+GAS_URL = "https://script.google.com/macros/s/AKfycbxJQ3XH6Ij2XDXRr0vlgEhHqG1sPi_5p07tKjmVlIt41Yfnpv1mfVUumzeNU5zYKq7H2A/exec"
 
 target_desc = " ＆ ".join(filter_summary) if filter_summary else "全数（条件なし）"
 
