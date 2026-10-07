@@ -18,7 +18,7 @@ def check_password():
         user_name = st.text_input("あなたのお名前（記録用）", value="メンバー")
         pw = st.text_input("合言葉を入力してください", type="password")
         if st.button("ログイン"):
-            if pw == "semi2026":
+            if pw == "analysis":
                 st.session_state["authenticated"] = True
                 st.session_state["user_name"] = user_name
                 st.rerun()
