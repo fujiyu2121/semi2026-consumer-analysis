@@ -148,6 +148,29 @@ with v_col2:
       key=f"verify_q_{verify_cat}",
   )
 
+# 注目する回答（絞り込み・2値化用）の選択UI
+focus_choices = []
+if verify_q:
+  q_info = questions[verify_q]
+  choices = q_info.get("choices", {})
+  is_verify_numeric = (
+      q_info.get("type") == "NUM"
+      or len(choices) == 0
+      or verify_q in ["AAF2"]
+  )
+
+  # カテゴリ設問の場合のみ、特定の回答に絞り込むUIを表示
+  if not is_verify_numeric and len(choices) > 0:
+    focus_choices = st.multiselect(
+        "③ 注目する回答を選択（未選択なら全選択肢を一覧表示）",
+        options=list(choices.keys()),
+        format_func=lambda c: choices.get(c, c),
+        help=(
+            "特定の回答（例: 東京都）を選ぶと、「該当回答」vs「その他全体」の2値に集約してすっきりクロス集計します。"
+        ),
+        key=f"focus_{verify_q}",
+    )
+
 # --- 5. オンデマンド読み込みと集計実行 ---
 cols_to_load = [cond[0] for cond in active_conditions]
 if verify_q:
@@ -169,7 +192,7 @@ for q_code, cond_data in active_conditions:
           f"{questions[q_code]['title']}: {val[0]}〜{val[1]}"
       )
     else:
-      if val:  # 選択肢が1つ以上ある場合のみ適用
+      if val:
         target_mask &= df_active[q_code].astype(str).isin(val)
         choice_labels = [questions[q_code]["choices"].get(v, v) for v in val]
         filter_summary.append(
@@ -220,7 +243,6 @@ if verify_q and verify_q in df_active.columns and target_n > 0:
       )
       st.dataframe(mean_df.round(2))
 
-      # Welchのt検定
       t_res = ttest_ind(t_vals, other_vals, equal_var=False)
       test_stat = float(t_res.statistic)
       p_val = float(t_res.pvalue)
@@ -238,47 +260,72 @@ if verify_q and verify_q in df_active.columns and target_n > 0:
   else:
     sub_df = pd.DataFrame({
         "グループ": np.where(target_mask, "ターゲット", "その他全体"),
-        "回答": df_active[verify_q].astype(str),
+        "回答コード": df_active[verify_q].astype(str),
     }).dropna()
-    sub_df = sub_df[sub_df["回答"].isin(choices.keys())]
+    sub_df = sub_df[sub_df["回答コード"].isin(choices.keys())]
 
-    if len(sub_df) > 0 and len(sub_df["回答"].unique()) > 1:
-      sub_df["回答ラベル"] = sub_df["回答"].map(choices)
-      ct = pd.crosstab(sub_df["グループ"], sub_df["回答ラベル"])
-      ct_pct = (
-          pd.crosstab(
-              sub_df["グループ"], sub_df["回答ラベル"], normalize="index"
+    if len(sub_df) > 0:
+      # ★ 注目する回答が指定された場合：2値化（該当項目 vs その他）
+      if focus_choices:
+        focus_labels = [choices.get(c, c) for c in focus_choices]
+        target_label = " / ".join(focus_labels)
+        other_label = f"その他（{target_label}以外）"
+
+        sub_df["回答ラベル"] = np.where(
+            sub_df["回答コード"].isin(focus_choices), target_label, other_label
+        )
+        display_title = f"{q_title}（注目: {target_label}）"
+      else:
+        # 未指定時は従来の全カテゴリ表示
+        sub_df["回答ラベル"] = sub_df["回答コード"].map(choices)
+        display_title = q_title
+
+      if len(sub_df["回答ラベル"].unique()) > 1:
+        ct = pd.crosstab(sub_df["グループ"], sub_df["回答ラベル"])
+        ct_pct = (
+            pd.crosstab(
+                sub_df["グループ"], sub_df["回答ラベル"], normalize="index"
+            )
+            * 100
+        )
+
+        st.write(f"**【クロス集計結果: {display_title}（比率 %）】**")
+        st.dataframe(ct_pct.round(1))
+
+        try:
+          chi2, p_val, dof, exp = chi2_contingency(ct)
+          test_stat = float(chi2)
+          col1, col2, col3 = st.columns(3)
+          col1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
+          col2.metric(
+              "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
           )
-          * 100
-      )
-
-      st.write(f"**【クロス集計結果: {q_title}（比率 %）】**")
-      st.dataframe(ct_pct.round(1))
-
-      try:
-        chi2, p_val, dof, exp = chi2_contingency(ct)
-        test_stat = float(chi2)
-        col1, col2, col3 = st.columns(3)
-        col1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
-        col2.metric(
-            "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
-        )
-        is_sig = p_val < 0.05
-        is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
-        col3.metric(
-            "検定結果 (カイ二乗)",
-            is_sig_str,
-            delta="有意" if is_sig else "なし",
-        )
-      except Exception:
-        st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
+          is_sig = p_val < 0.05
+          is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
+          col3.metric(
+              "検定結果 (カイ二乗)",
+              is_sig_str,
+              delta="有意" if is_sig else "なし",
+          )
+        except Exception:
+          st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
+      else:
+        st.warning("集計に必要なバリエーションが不足しています。")
+    else:
+      st.warning("有効な回答データが不足しているため、クロス集計できません。")
 
 # --- 6. スプレッドシート保存 ---
 st.divider()
 st.subheader("📋 3. 班のスプレッドシートに保存")
-GAS_URL = "https://script.google.com/macros/s/AKfycby2qTjYVCz99zAtGx19DF4M1wkm0MTKoM417CpUpBPRytS18vSQpILcliYbFmm7-2Vugg/exec"
+GAS_URL = "ここにGASのウェブアプリURLを貼り付け"
 
 target_desc = " ＆ ".join(filter_summary) if filter_summary else "全数（条件なし）"
+
+# 保存用の検証設問名（注目項目がある場合は追記）
+record_q_title = q_title
+if focus_choices:
+  focus_labels = [choices.get(c, c) for c in focus_choices]
+  record_q_title = f"{q_title} [注目: {' / '.join(focus_labels)}]"
 
 if st.button("この分析結果をスプレッドシートに追記する"):
   if "ここにGAS" in GAS_URL:
@@ -289,8 +336,8 @@ if st.button("この分析結果をスプレッドシートに追記する"):
         "target_name": target_desc,
         "sample_size": target_n,
         "total_ratio": f"{target_ratio:.2f}%",
-        "question_title": q_title,
-        "chi2": round(float(test_stat), 2),  # t値またはカイ二乗値
+        "question_title": record_q_title,
+        "chi2": round(float(test_stat), 2),
         "p_value": round(float(p_val), 4),
         "is_significant": is_sig_str,
     }
