@@ -317,7 +317,7 @@ if verify_q and verify_q in df_active.columns and target_n > 0:
 # --- 6. スプレッドシート保存 ---
 st.divider()
 st.subheader("📋 3. 班のスプレッドシートに保存")
-GAS_URL = "ここにGASのウェブアプリURLを貼り付け"
+GAS_URL = "https://script.google.com/macros/s/AKfycby2qTjYVCz99zAtGx19DF4M1wkm0MTKoM417CpUpBPRytS18vSQpILcliYbFmm7-2Vugg/exec"
 
 target_desc = " ＆ ".join(filter_summary) if filter_summary else "全数（条件なし）"
 
