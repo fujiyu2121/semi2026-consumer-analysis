@@ -72,8 +72,19 @@ df_raw = pd.read_csv(
     dtype=str,
 )
 
+# preprocess.py の該当部分（マスター構築後）
+# AAF2（年齢）など、選択肢を持たない数値列をマスターに登録
 if "AAF2" in df_raw.columns:
-  df_raw["AAF2"] = pd.to_numeric(df_raw["AAF2"], errors="coerce").fillna(0)
+  questions["AAF2"] = {
+      "title": "年齢",
+      "category": "基本属性",  # 基本属性カテゴリに配置
+      "type": "NUM",  # 数値型フラグ
+      "choices": {},
+  }
+  # カテゴリマップにも追加
+  if "基本属性" in filtered_cat_questions:
+    if "AAF2" not in filtered_cat_questions["基本属性"]:
+      filtered_cat_questions["基本属性"].insert(0, "AAF2")
 
 # 存在する列のみにマスターを絞り込み
 filtered_questions = {k: questions[k] for k in valid_cols if k in questions}
