@@ -255,34 +255,57 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
       q_info.get("type") == "NUM" or len(choices) == 0 or verify_q == "AAF2"
   )
 
-  # AとBの比較対象データフレーム作成
-  # （両方に該当するサンプルは重複を避けるため除外またはA優先処理）
-  idx_A = df_active[mask_A & ~mask_B].index
-  idx_B = df_active[mask_B & ~mask_A].index
+  # サンプルのインデックス整理
+  idx_A = df_active[mask_A].index
+  idx_B = df_active[mask_B].index
 
-  if len(idx_A) == 0 or len(idx_B) == 0:
+  # 重複（AかつB）と、BのうちA以外（B - A）の抽出
+  idx_overlap = df_active[mask_A & mask_B].index
+  idx_B_pure = df_active[mask_B & ~mask_A].index
+
+  # 比較・検定用グループの定義
+  is_subset = len(idx_overlap) > 0
+
+  if is_subset:
+    st.caption(
+        f"💡 **サンプル関係性**: ターゲットA（{nA:,}人）とターゲットB（{nB:,}人）に"
+        f" {len(idx_overlap):,} 人の重複があります。"
+        f" クロス集計表には指定通りの両群を表示し、統計検定はサンプルの独立性を保つため「ターゲットA」vs「ターゲットBのうちA以外（{len(idx_B_pure):,}人）」で計算しています。"
+    )
+
+  if len(idx_A) == 0 or (is_subset and len(idx_B_pure) == 0):
     st.warning(
-        "ターゲットAとターゲットBが完全に重複しているか、対象者が0人です。条件を見直してください。"
+        "ターゲットAとターゲットBが完全一致しているため、有意差を比較・検定できません。条件を見直してください。"
     )
   else:
-    # パターン1: 間隔尺度（数値型データ） -> 平均値比較 & t検定
+    # ----------------------------------------------------
+    # パターン1: 間隔尺度（数値データ） -> 平均値比較 & t検定
+    # ----------------------------------------------------
     if is_verify_numeric:
       st.markdown(f"#### 📊 平均値比較: {q_title}（間隔尺度）")
       s_num = pd.to_numeric(df_active[verify_q], errors="coerce")
       vals_A = s_num.loc[idx_A].dropna()
       vals_B = s_num.loc[idx_B].dropna()
+      vals_B_test = (
+          s_num.loc[idx_B_pure].dropna() if is_subset else vals_B
+      )  # 検定用
 
-      if len(vals_A) > 0 and len(vals_B) > 0:
+      if len(vals_A) > 0 and len(vals_B) > 0 and len(vals_B_test) > 0:
         res_df = pd.DataFrame(
             {
                 "ターゲット A": [vals_A.mean(), vals_A.std(), len(vals_A)],
-                "ターゲット B": [vals_B.mean(), vals_B.std(), len(vals_B)],
+                "ターゲット B (参照全体)": [
+                    vals_B.mean(),
+                    vals_B.std(),
+                    len(vals_B),
+                ],
             },
             index=["平均値", "標準偏差", "サンプルサイズ"],
         )
         st.dataframe(res_df.round(2))
 
-        t_res = ttest_ind(vals_A, vals_B, equal_var=False)
+        # Welchのt検定（重複を除いた群と比較）
+        t_res = ttest_ind(vals_A, vals_B_test, equal_var=False)
         test_stat = float(t_res.statistic)
         p_val = float(t_res.pvalue)
 
@@ -297,39 +320,67 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
             "検定結果 (t検定)", is_sig_str, delta="有意" if is_sig else "なし"
         )
 
+    # ----------------------------------------------------
     # パターン2: カテゴリ尺度 -> クロス集計 & カイ二乗検定
+    # ----------------------------------------------------
     else:
       st.markdown(f"#### 📊 クロス集計結果: {q_title}（ターゲットA vs ターゲットB）")
-      series_A = pd.DataFrame(
-          {"グループ": "ターゲット A", "回答コード": df_active.loc[idx_A, verify_q]}
-      )
-      series_B = pd.DataFrame(
-          {"グループ": "ターゲット B", "回答コード": df_active.loc[idx_B, verify_q]}
-      )
-      comp_df = pd.concat([series_A, series_B]).dropna()
-      comp_df = comp_df[comp_df["回答コード"].isin(choices.keys())]
 
+      # 表表示用のデータ作成（A vs B をそのまま並べる）
+      df_disp_A = pd.DataFrame({
+          "グループ": "ターゲット A",
+          "回答コード": df_active.loc[idx_A, verify_q],
+      })
+      df_disp_B = pd.DataFrame({
+          "グループ": "ターゲット B (参照全体)",
+          "回答コード": df_active.loc[idx_B, verify_q],
+      })
+      disp_df = pd.concat([df_disp_A, df_disp_B]).dropna()
+      disp_df = disp_df[disp_df["回答コード"].isin(choices.keys())]
+
+      # 検定用のデータ作成（独立性を保つため A vs B_pure）
+      idx_test_B = idx_B_pure if is_subset else idx_B
+      df_test_A = pd.DataFrame(
+          {"グループ": "A", "回答コード": df_active.loc[idx_A, verify_q]}
+      )
+      df_test_B = pd.DataFrame(
+          {"グループ": "B_other", "回答コード": df_active.loc[idx_test_B, verify_q]}
+      )
+      test_df = pd.concat([df_test_A, df_test_B]).dropna()
+      test_df = test_df[test_df["回答コード"].isin(choices.keys())]
+
+      # 回答のラベル付け（注目回答があれば2値化）
       if focus_choices:
         labels = [choices.get(c, c) for c in focus_choices]
         target_lbl = " / ".join(labels)
-        comp_df["回答"] = np.where(
-            comp_df["回答コード"].isin(focus_choices),
+        disp_df["回答"] = np.where(
+            disp_df["回答コード"].isin(focus_choices),
             target_lbl,
             f"その他（{target_lbl}以外）",
         )
+        test_df["回答"] = np.where(
+            test_df["回答コード"].isin(focus_choices),
+            target_lbl,
+            f"その他（{target_lbl}以外）",
+        )
+        display_title_addon = f" [注目: {target_lbl}]"
       else:
-        comp_df["回答"] = comp_df["回答コード"].map(choices)
+        disp_df["回答"] = disp_df["回答コード"].map(choices)
+        test_df["回答"] = test_df["回答コード"].map(choices)
+        display_title_addon = ""
 
-      if len(comp_df["回答"].unique()) > 1:
+      # 画面表示用の比率クロス集計表
+      if len(disp_df["回答"].unique()) > 1:
         ct_pct = (
-            pd.crosstab(comp_df["グループ"], comp_df["回答"], normalize="index")
+            pd.crosstab(disp_df["グループ"], disp_df["回答"], normalize="index")
             * 100
         )
         st.dataframe(ct_pct.round(1))
 
-        ct_raw = pd.crosstab(comp_df["グループ"], comp_df["回答"])
+        # カイ二乗検定の実行（test_df の度数表で計算）
+        ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
         try:
-          chi2, p_val, dof, _ = chi2_contingency(ct_raw)
+          chi2, p_val, dof, _ = chi2_contingency(ct_test)
           test_stat = float(chi2)
           m1, m2, m3 = st.columns(3)
           m1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
@@ -345,6 +396,8 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           )
         except Exception:
           st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
+      else:
+        st.warning("集計に必要なバリエーションが不足しています。")
 
 # --- 7. スプレッドシート保存 ---
 st.divider()
