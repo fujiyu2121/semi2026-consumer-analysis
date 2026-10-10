@@ -326,7 +326,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
     else:
       st.markdown(f"#### 📊 クロス集計結果: {q_title}（ターゲットA vs ターゲットB）")
 
-      # 表表示用のデータ作成（A vs B をそのまま並べる）
+      # 表表示用のデータ作成（ignore_index=True でインデックス重複を解消）
       df_disp_A = pd.DataFrame({
           "グループ": "ターゲット A",
           "回答コード": df_active.loc[idx_A, verify_q],
@@ -335,10 +335,14 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           "グループ": "ターゲット B (参照全体)",
           "回答コード": df_active.loc[idx_B, verify_q],
       })
-      disp_df = pd.concat([df_disp_A, df_disp_B]).dropna()
+      disp_df = (
+          pd.concat([df_disp_A, df_disp_B], ignore_index=True)
+          .dropna()
+          .reset_index(drop=True)
+      )  # ← ここ
       disp_df = disp_df[disp_df["回答コード"].isin(choices.keys())]
 
-      # 検定用のデータ作成（独立性を保つため A vs B_pure）
+      # 検定用のデータ作成（こちらも ignore_index=True を追加）
       idx_test_B = idx_B_pure if is_subset else idx_B
       df_test_A = pd.DataFrame(
           {"グループ": "A", "回答コード": df_active.loc[idx_A, verify_q]}
@@ -346,7 +350,11 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
       df_test_B = pd.DataFrame(
           {"グループ": "B_other", "回答コード": df_active.loc[idx_test_B, verify_q]}
       )
-      test_df = pd.concat([df_test_A, df_test_B]).dropna()
+      test_df = (
+          pd.concat([df_test_A, df_test_B], ignore_index=True)
+          .dropna()
+          .reset_index(drop=True)
+      )  # ← ここ
       test_df = test_df[test_df["回答コード"].isin(choices.keys())]
 
       # 回答のラベル付け（注目回答があれば2値化）
