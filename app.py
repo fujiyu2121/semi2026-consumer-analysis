@@ -1,5 +1,6 @@
 # app.py
 import json
+import os
 import numpy as np
 import pandas as pd
 import requests
@@ -9,6 +10,25 @@ import streamlit as st
 st.set_page_config(
     page_title="生活者データ分析ツール", layout="wide", page_icon="🥤"
 )
+
+# --- 0. タイプ4潜在層キーの読み込み ---
+ESTIMATE_CSV = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "type4_market_estimates.csv"
+)
+
+
+@st.cache_data
+def load_type4_keys():
+  if os.path.exists(ESTIMATE_CSV):
+    df_est = pd.read_csv(ESTIMATE_CSV)
+    df_est["KEY"] = df_est["KEY"].astype(str)
+    # 30歳以下 かつ タイプ4確率 0.3以上のKEY
+    mask = (df_est["is_u30"] == True) & (df_est["type4_prob"] >= 0.3)
+    return set(df_est.loc[mask, "KEY"].unique())
+  return set()
+
+
+type4_keys = load_type4_keys()
 
 
 # --- 1. 合言葉認証 ---
@@ -139,308 +159,30 @@ def render_condition(grp, cid, display_idx):
 st.subheader("🎯 1. 比較する2つのターゲットを設定")
 col_grp_a, col_grp_b = st.columns(2)
 
+PRESET_OPTIONS = [
+    "自由条件（設問から指定）",
+    f"【プリセット】タイプ4潜在層（U30: {len(type4_keys):,}人）",
+    "【プリセット】30歳以下全体（U30）",
+]
+
 active_conditions_A = []
 with col_grp_a:
   st.markdown("### 🅰️ ターゲット A")
-  for idx, cid in enumerate(st.session_state["cond_ids_A"], start=1):
-    q_code, cond_val = render_condition("A", cid, idx)
-    if q_code and cond_val:
-      active_conditions_A.append((q_code, cond_val))
-  st.button("➕ 条件を追加 (A)", on_click=add_condition, args=("A",))
+  target_a_mode = st.radio(
+      "ターゲットAの指定方法", PRESET_OPTIONS, key="target_a_mode"
+  )
+
+  if target_a_mode == "自由条件（設問から指定）":
+    for idx, cid in enumerate(st.session_state["cond_ids_A"], start=1):
+      q_code, cond_val = render_condition("A", cid, idx)
+      if q_code and cond_val:
+        active_conditions_A.append((q_code, cond_val))
+    st.button("➕ 条件を追加 (A)", on_click=add_condition, args=("A",))
+  elif "タイプ4潜在層" in target_a_mode:
+    st.success(f"🎯 タイプ4潜在層を選択中: {len(type4_keys):,} 人")
+  else:
+    st.info("👥 30歳以下全体を選択中")
 
 active_conditions_B = []
 with col_grp_b:
-  st.markdown("### 🅱️ ターゲット B（対照群）")
-  for idx, cid in enumerate(st.session_state["cond_ids_B"], start=1):
-    q_code, cond_val = render_condition("B", cid, idx)
-    if q_code and cond_val:
-      active_conditions_B.append((q_code, cond_val))
-  st.button("➕ 条件を追加 (B)", on_click=add_condition, args=("B",))
-
-# --- 5. 検証質問の選択 ---
-st.divider()
-st.subheader("🔍 2. 比較・検証する質問の選択")
-
-v_col1, v_col2 = st.columns(2)
-with v_col1:
-  verify_cat = st.selectbox(
-      "① 検証質問の大分類", options=categories, key="verify_cat"
-  )
-
-verify_available_qs = cat_map.get(verify_cat, [])
-with v_col2:
-  verify_q = st.selectbox(
-      "② 検証する質問",
-      options=verify_available_qs,
-      format_func=lambda q: f"{questions[q]['title']} ({q})",
-      key=f"verify_q_{verify_cat}",
-  )
-
-focus_choices = []
-if verify_q:
-  q_info = questions[verify_q]
-  choices = q_info.get("choices", {})
-  is_verify_numeric = (
-      q_info.get("type") == "NUM" or len(choices) == 0 or verify_q == "AAF2"
-  )
-
-  if not is_verify_numeric and len(choices) > 0:
-    focus_choices = st.multiselect(
-        "③ 注目する回答を選択（任意：選択すると該当回答 vs それ以外に2値化されます）",
-        options=list(choices.keys()),
-        format_func=lambda c: choices.get(c, c),
-        key=f"focus_{verify_q}",
-    )
-
-# --- 6. オンデマンド読み込みと集計 ---
-needed_cols = [c[0] for c in active_conditions_A] + [
-    c[0] for c in active_conditions_B
-]
-if verify_q:
-  needed_cols.append(verify_q)
-
-df_active = load_selected_columns(needed_cols)
-
-
-# マスク作成関数
-def make_mask(conds, df):
-  mask = pd.Series(True, index=df.index)
-  summary = []
-  for q_code, cond_data in conds:
-    mode, val = cond_data
-    if q_code in df.columns:
-      if mode == "NUMERIC":
-        s_num = pd.to_numeric(df[q_code], errors="coerce")
-        mask &= (s_num >= val[0]) & (s_num <= val[1])
-        summary.append(f"{questions[q_code]['title']}: {val[0]}〜{val[1]}")
-      else:
-        if val:
-          mask &= df[q_code].astype(str).isin(val)
-          labels = [questions[q_code]["choices"].get(v, v) for v in val]
-          summary.append(
-              f"{questions[q_code]['title']}: {', '.join(labels)}"
-          )
-  return mask, summary
-
-
-mask_A, summary_A = make_mask(active_conditions_A, df_active)
-mask_B, summary_B = make_mask(active_conditions_B, df_active)
-
-nA = int(mask_A.sum())
-nB = int(mask_B.sum())
-
-# 規模サマリー
-info_col1, info_col2 = st.columns(2)
-with info_col1:
-  st.info(
-      f"🅰️ **ターゲット A 規模**\n\n・人数: **{nA:,} 人** ("
-      f" {(nA/total_n)*100:.2f}%)"
-  )
-with info_col2:
-  st.info(
-      f"🅱️ **ターゲット B 規模**\n\n・人数: **{nB:,} 人** ("
-      f" {(nB/total_n)*100:.2f}%)"
-  )
-
-test_stat, p_val = 0.0, 1.0
-q_title = ""
-is_sig_str = "有意差なし"
-
-# 集計実行
-if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
-  q_info = questions[verify_q]
-  q_title = q_info["title"]
-  choices = q_info.get("choices", {})
-  is_verify_numeric = (
-      q_info.get("type") == "NUM" or len(choices) == 0 or verify_q == "AAF2"
-  )
-
-  # サンプルのインデックス整理
-  idx_A = df_active[mask_A].index
-  idx_B = df_active[mask_B].index
-
-  # 重複（AかつB）と、BのうちA以外（B - A）の抽出
-  idx_overlap = df_active[mask_A & mask_B].index
-  idx_B_pure = df_active[mask_B & ~mask_A].index
-
-  # 比較・検定用グループの定義
-  is_subset = len(idx_overlap) > 0
-
-  if is_subset:
-    st.caption(
-        f"💡 **サンプル関係性**: ターゲットA（{nA:,}人）とターゲットB（{nB:,}人）に"
-        f" {len(idx_overlap):,} 人の重複があります。"
-        f" クロス集計表には指定通りの両群を表示し、統計検定はサンプルの独立性を保つため「ターゲットA」vs「ターゲットBのうちA以外（{len(idx_B_pure):,}人）」で計算しています。"
-    )
-
-  if len(idx_A) == 0 or (is_subset and len(idx_B_pure) == 0):
-    st.warning(
-        "ターゲットAとターゲットBが完全一致しているため、有意差を比較・検定できません。条件を見直してください。"
-    )
-  else:
-    # ----------------------------------------------------
-    # パターン1: 間隔尺度（数値データ） -> 平均値比較 & t検定
-    # ----------------------------------------------------
-    if is_verify_numeric:
-      st.markdown(f"#### 📊 平均値比較: {q_title}（間隔尺度）")
-      s_num = pd.to_numeric(df_active[verify_q], errors="coerce")
-      vals_A = s_num.loc[idx_A].dropna()
-      vals_B = s_num.loc[idx_B].dropna()
-      vals_B_test = (
-          s_num.loc[idx_B_pure].dropna() if is_subset else vals_B
-      )  # 検定用
-
-      if len(vals_A) > 0 and len(vals_B) > 0 and len(vals_B_test) > 0:
-        res_df = pd.DataFrame(
-            {
-                "ターゲット A": [vals_A.mean(), vals_A.std(), len(vals_A)],
-                "ターゲット B (参照全体)": [
-                    vals_B.mean(),
-                    vals_B.std(),
-                    len(vals_B),
-                ],
-            },
-            index=["平均値", "標準偏差", "サンプルサイズ"],
-        )
-        st.dataframe(res_df.round(2))
-
-        # Welchのt検定（重複を除いた群と比較）
-        t_res = ttest_ind(vals_A, vals_B_test, equal_var=False)
-        test_stat = float(t_res.statistic)
-        p_val = float(t_res.pvalue)
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric("t値", f"{test_stat:.2f}")
-        m2.metric(
-            "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
-        )
-        is_sig = p_val < 0.05
-        is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
-        m3.metric(
-            "検定結果 (t検定)", is_sig_str, delta="有意" if is_sig else "なし"
-        )
-
-    # ----------------------------------------------------
-    # パターン2: カテゴリ尺度 -> クロス集計 & カイ二乗検定
-    # ----------------------------------------------------
-    else:
-      st.markdown(f"#### 📊 クロス集計結果: {q_title}（ターゲットA vs ターゲットB）")
-
-      # 表表示用のデータ作成（ignore_index=True でインデックス重複を解消）
-      df_disp_A = pd.DataFrame({
-          "グループ": "ターゲット A",
-          "回答コード": df_active.loc[idx_A, verify_q],
-      })
-      df_disp_B = pd.DataFrame({
-          "グループ": "ターゲット B (参照全体)",
-          "回答コード": df_active.loc[idx_B, verify_q],
-      })
-      disp_df = (
-          pd.concat([df_disp_A, df_disp_B], ignore_index=True)
-          .dropna()
-          .reset_index(drop=True)
-      )  # ← ここ
-      disp_df = disp_df[disp_df["回答コード"].isin(choices.keys())]
-
-      # 検定用のデータ作成（こちらも ignore_index=True を追加）
-      idx_test_B = idx_B_pure if is_subset else idx_B
-      df_test_A = pd.DataFrame(
-          {"グループ": "A", "回答コード": df_active.loc[idx_A, verify_q]}
-      )
-      df_test_B = pd.DataFrame(
-          {"グループ": "B_other", "回答コード": df_active.loc[idx_test_B, verify_q]}
-      )
-      test_df = (
-          pd.concat([df_test_A, df_test_B], ignore_index=True)
-          .dropna()
-          .reset_index(drop=True)
-      )  # ← ここ
-      test_df = test_df[test_df["回答コード"].isin(choices.keys())]
-
-      # 回答のラベル付け（注目回答があれば2値化）
-      if focus_choices:
-        labels = [choices.get(c, c) for c in focus_choices]
-        target_lbl = " / ".join(labels)
-        disp_df["回答"] = np.where(
-            disp_df["回答コード"].isin(focus_choices),
-            target_lbl,
-            f"その他（{target_lbl}以外）",
-        )
-        test_df["回答"] = np.where(
-            test_df["回答コード"].isin(focus_choices),
-            target_lbl,
-            f"その他（{target_lbl}以外）",
-        )
-        display_title_addon = f" [注目: {target_lbl}]"
-      else:
-        disp_df["回答"] = disp_df["回答コード"].map(choices)
-        test_df["回答"] = test_df["回答コード"].map(choices)
-        display_title_addon = ""
-
-      # 画面表示用の比率クロス集計表
-      if len(disp_df["回答"].unique()) > 1:
-        ct_pct = (
-            pd.crosstab(disp_df["グループ"], disp_df["回答"], normalize="index")
-            * 100
-        )
-        st.dataframe(ct_pct.round(1))
-
-        # カイ二乗検定の実行（test_df の度数表で計算）
-        ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
-        try:
-          chi2, p_val, dof, _ = chi2_contingency(ct_test)
-          test_stat = float(chi2)
-          m1, m2, m3 = st.columns(3)
-          m1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
-          m2.metric(
-              "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
-          )
-          is_sig = p_val < 0.05
-          is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
-          m3.metric(
-              "検定結果 (カイ二乗)",
-              is_sig_str,
-              delta="有意" if is_sig else "なし",
-          )
-        except Exception:
-          st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
-      else:
-        st.warning("集計に必要なバリエーションが不足しています。")
-
-# --- 7. スプレッドシート保存 ---
-st.divider()
-st.subheader("📋 3. 班のスプレッドシートに保存")
-GAS_URL = "https://script.google.com/macros/s/AKfycby2qTjYVCz99zAtGx19DF4M1wkm0MTKoM417CpUpBPRytS18vSQpILcliYbFmm7-2Vugg/exec"
-
-desc_A = " ＆ ".join(summary_A) if summary_A else "全数"
-desc_B = " ＆ ".join(summary_B) if summary_B else "全数"
-
-record_q = q_title
-if focus_choices:
-  labels = [choices.get(c, c) for c in focus_choices]
-  record_q = f"{q_title} [注目: {' / '.join(labels)}]"
-
-if st.button("この比較結果をスプレッドシートに追記する"):
-  if "ここにGAS" in GAS_URL:
-    st.warning("⚠️ まだGASのWebアプリURLが設定されていません。")
-  else:
-    payload = {
-        "user_name": st.session_state.get("user_name", "メンバー"),
-        "target_name": f"[A] {desc_A} vs [B] {desc_B}",
-        "sample_size": f"A:{nA} / B:{nB}",
-        "total_ratio": (
-            f"A:{(nA/total_n)*100:.1f}% / B:{(nB/total_n)*100:.1f}%"
-        ),
-        "question_title": record_q,
-        "chi2": round(float(test_stat), 2),
-        "p_value": round(float(p_val), 4),
-        "is_significant": is_sig_str,
-    }
-    try:
-      res = requests.post(GAS_URL, json=payload, timeout=5)
-      if res.status_code == 200:
-        st.success("🎉 スプレッドシートに比較結果が記録されました！")
-      else:
-        st.error(f"送信エラー: {res.status_code}")
-    except Exception as e:
-      st.error(f"通信エラー: {e}")
+  st.markdown("### 🅱️
