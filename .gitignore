@@ -1,6 +1,7 @@
 # 原本CSVや一時ファイルを除外
 raw_SSC_19_4.csv
 *.csv
+!type4_market_estimates.csv
 __pycache__/
 .venv/
 .DS_Store
