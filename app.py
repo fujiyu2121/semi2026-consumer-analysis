@@ -11,29 +11,18 @@ st.set_page_config(
     page_title="生活者データ分析ツール", layout="wide", page_icon="🥤"
 )
 
-ESTIMATE_CSV = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "type4_market_estimates.csv"
+TYPE4_JSON = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "type4_keys.json"
 )
 
 
 @st.cache_data
 def load_type4_keys():
-  if not os.path.exists(ESTIMATE_CSV):
-    # ファイルが存在しない場合は警告を表示
-    st.sidebar.error(
-        f"⚠️ 推計ファイルが見つかりません: {os.path.basename(ESTIMATE_CSV)}"
-    )
-    return set()
-
-  df_est = pd.read_csv(ESTIMATE_CSV)
-  df_est["KEY"] = df_est["KEY"].astype(str)
-
-  # 文字列 'True' と真偽値 True の両方に対応
-  is_u30_mask = df_est["is_u30"].astype(str).str.upper() == "TRUE"
-  prob_mask = pd.to_numeric(df_est["type4_prob"], errors="coerce") >= 0.3
-
-  target_keys = set(df_est.loc[is_u30_mask & prob_mask, "KEY"].unique())
-  return target_keys
+  if os.path.exists(TYPE4_JSON):
+    with open(TYPE4_JSON, "r", encoding="utf-8") as f:
+      keys = json.load(f)
+    return set(keys)
+  return set()
 
 
 type4_keys = load_type4_keys()
