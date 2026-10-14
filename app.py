@@ -14,6 +14,9 @@ st.set_page_config(
 TYPE4_JSON = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "type4_keys.json"
 )
+CLUSTER0_JSON = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "cluster0_keys.json"
+)
 
 
 @st.cache_data
@@ -25,7 +28,17 @@ def load_type4_keys():
   return set()
 
 
+@st.cache_data
+def load_cluster0_keys():
+  if os.path.exists(CLUSTER0_JSON):
+    with open(CLUSTER0_JSON, "r", encoding="utf-8") as f:
+      keys = json.load(f)
+    return set(keys)
+  return set()
+
+
 type4_keys = load_type4_keys()
+cluster0_keys = load_cluster0_keys()
 
 
 # --- 1. 合言葉認証 ---
@@ -157,6 +170,7 @@ col_grp_a, col_grp_b = st.columns(2)
 
 PRESET_OPTIONS = [
     "自由条件（設問から指定）",
+    f"【プリセット】クラスター0（コア層: {len(cluster0_keys):,}人）",
     f"【プリセット】クラスタ4（U30: {len(type4_keys):,}人）",
     "【プリセット】30歳以下全体（U30）",
 ]
@@ -165,7 +179,10 @@ active_conditions_A = []
 with col_grp_a:
   st.markdown("### 🅰️ ターゲット A")
   target_a_mode = st.radio(
-      "ターゲットAの指定方法", PRESET_OPTIONS, key="target_a_mode"
+      "ターゲットAの指定方法",
+      PRESET_OPTIONS,
+      index=1,  # 初期値を「クラスター0」に設定
+      key="target_a_mode",
   )
 
   if target_a_mode == "自由条件（設問から指定）":
@@ -174,6 +191,8 @@ with col_grp_a:
       if q_code and cond_val:
         active_conditions_A.append((q_code, cond_val))
     st.button("➕ 条件を追加 (A)", on_click=add_condition, args=("A",))
+  elif "クラスター0" in target_a_mode:
+    st.success(f"🎯 クラスター0（コア層）を選択中: {len(cluster0_keys):,} 人")
   elif "クラスタ4" in target_a_mode:
     st.success(f"🎯 クラスタ4を選択中: {len(type4_keys):,} 人")
   else:
@@ -185,7 +204,7 @@ with col_grp_b:
   target_b_mode = st.radio(
       "ターゲットBの指定方法",
       PRESET_OPTIONS,
-      index=2,  # 初期値を「30歳以下全体」に
+      index=3,  # 初期値を「30歳以下全体」に設定
       key="target_b_mode",
   )
 
@@ -195,6 +214,8 @@ with col_grp_b:
       if q_code and cond_val:
         active_conditions_B.append((q_code, cond_val))
     st.button("➕ 条件を追加 (B)", on_click=add_condition, args=("B",))
+  elif "クラスター0" in target_b_mode:
+    st.success(f"🎯 クラスター0（コア層）を選択中: {len(cluster0_keys):,} 人")
   elif "クラスタ4" in target_b_mode:
     st.success(f"🎯 クラスタ4を選択中: {len(type4_keys):,} 人")
   else:
@@ -275,7 +296,10 @@ def make_mask(conds, df):
 
 
 # ターゲットAのマスク作成
-if "クラスタ4" in target_a_mode:
+if "クラスター0" in target_a_mode:
+  mask_A = df_active["KEY"].isin(cluster0_keys)
+  summary_A = ["クラスター0 (コア層)"]
+elif "クラスタ4" in target_a_mode:
   mask_A = df_active["KEY"].isin(type4_keys)
   summary_A = ["クラスタ4 (U30)"]
 elif "30歳以下全体" in target_a_mode:
@@ -285,7 +309,10 @@ else:
   mask_A, summary_A = make_mask(active_conditions_A, df_active)
 
 # ターゲットBのマスク作成
-if "クラスタ4" in target_b_mode:
+if "クラスター0" in target_b_mode:
+  mask_B = df_active["KEY"].isin(cluster0_keys)
+  summary_B = ["クラスター0 (コア層)"]
+elif "クラスタ4" in target_b_mode:
   mask_B = df_active["KEY"].isin(type4_keys)
   summary_B = ["クラスタ4 (U30)"]
 elif "30歳以下全体" in target_b_mode:
@@ -396,7 +423,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         col_data = df_active[verify_q].fillna("").astype(str)
         idx_test_B = idx_B_pure if is_subset else idx_B
 
-        # ケース1: 「注目する回答」が指定されている場合（例: コンビニで買う人 vs 買わない人）
+        # ケース1: 「注目する回答」が指定されている場合
         if focus_choices:
           target_labels = [choices.get(c, c) for c in focus_choices]
           target_name = " / ".join(target_labels)
@@ -447,7 +474,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           )
           st.dataframe(ct_pct.round(1), use_container_width=True)
 
-          # 2×2 カイ二乗検定
           ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
           try:
             chi2, p_v, _, _ = chi2_contingency(ct_test)
@@ -497,7 +523,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
             pct_B = (cnt_B / len(idx_B)) * 100 if len(idx_B) > 0 else 0
             diff = pct_A - pct_B
 
-            # 各選択肢ごとの 2×2 カイ二乗検定
             c_A_1 = cnt_A
             c_A_0 = len(idx_A) - cnt_A
             c_B_1 = dum_B_test[opt].sum() if opt in dum_B_test else 0
@@ -602,7 +627,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           )
           st.dataframe(ct_pct.round(1), use_container_width=True)
 
-          # カイ二乗検定
           ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
           try:
             chi2, p_v, dof, _ = chi2_contingency(ct_test)
@@ -656,7 +680,6 @@ if st.button("この比較結果をスプレッドシートに追記する"):
         "is_significant": is_sig_str,
     }
     try:
-      # タイムアウトを15秒に設定
       res = requests.post(GAS_URL, json=payload, timeout=15)
       if res.status_code == 200:
         st.success("🎉 スプレッドシートに比較結果が記録されました！")
