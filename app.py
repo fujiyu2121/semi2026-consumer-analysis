@@ -1,6 +1,7 @@
-# app.py
+# app.py 冒頭
 import json
 import os
+import re  # ← ここを追加
 import numpy as np
 import pandas as pd
 import requests
