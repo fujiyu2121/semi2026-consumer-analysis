@@ -248,7 +248,7 @@ df_active = load_selected_columns(needed_cols)
 df_active["KEY"] = df_active["KEY"].astype(str)
 
 
-# マスク作成関数
+# マスク作成関数（複数回答の包含判定に対応）
 def make_mask(conds, df):
   mask = pd.Series(True, index=df.index)
   summary = []
@@ -261,7 +261,15 @@ def make_mask(conds, df):
         summary.append(f"{questions[q_code]['title']}: {val[0]}〜{val[1]}")
       else:
         if val:
-          mask &= df[q_code].astype(str).isin(val)
+          # 複数回答（カンマ区切り）でも「その選択肢を含んでいる」人を確実に拾う
+          # 正規表現で「行頭またはカンマ」+ 値 +「行末またはカンマ」を判定
+          pattern = "|".join([rf"(?:^|,){re.escape(str(v))}(?:,|$)" for v in val])
+          mask &= (
+              df[q_code]
+              .astype(str)
+              .str.contains(pattern, regex=True, na=False)
+          )
+
           labels = [questions[q_code]["choices"].get(v, v) for v in val]
           summary.append(
               f"{questions[q_code]['title']}: {', '.join(labels)}"
@@ -384,89 +392,149 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         )
 
     # ----------------------------------------------------
-    # パターン2: カテゴリ尺度 -> クロス集計 & カイ二乗検定
+    # パターン2: カテゴリ尺度 / 複数回答
     # ----------------------------------------------------
     else:
-      st.markdown(f"#### 📊 クロス集計結果: {q_title}（ターゲットA vs ターゲットB）")
+      q_type = str(q_info.get("type", "S")).upper()
+      is_ml = (
+          q_type == "ML"
+          or df_active[verify_q].astype(str).str.contains(",").any()
+      )
 
-      # 表表示用のデータ作成
-      df_disp_A = pd.DataFrame({
-          "グループ": "ターゲット A",
-          "回答コード": df_active.loc[idx_A, verify_q],
-      })
-      df_disp_B = pd.DataFrame({
-          "グループ": "ターゲット B (参照全体)",
-          "回答コード": df_active.loc[idx_B, verify_q],
-      })
-      disp_df = (
-          pd.concat([df_disp_A, df_disp_B], ignore_index=True)
-          .dropna()
-          .reset_index(drop=True)
-      )
-      disp_df = disp_df[disp_df["回答コード"].isin(choices.keys())]
-
-      # 検定用のデータ作成
-      idx_test_B = idx_B_pure if is_subset else idx_B
-      df_test_A = pd.DataFrame(
-          {"グループ": "A", "回答コード": df_active.loc[idx_A, verify_q]}
-      )
-      df_test_B = pd.DataFrame(
-          {"グループ": "B_other", "回答コード": df_active.loc[idx_test_B, verify_q]}
-      )
-      test_df = (
-          pd.concat([df_test_A, df_test_B], ignore_index=True)
-          .dropna()
-          .reset_index(drop=True)
-      )
-      test_df = test_df[test_df["回答コード"].isin(choices.keys())]
-
-      # 回答のラベル付け（注目回答があれば2値化）
-      if focus_choices:
-        labels = [choices.get(c, c) for c in focus_choices]
-        target_lbl = " / ".join(labels)
-        disp_df["回答"] = np.where(
-            disp_df["回答コード"].isin(focus_choices),
-            target_lbl,
-            f"その他（{target_lbl}以外）",
+      # === 複数回答 (ML) の場合 ===
+      if is_ml:
+        st.markdown(
+            f"#### 📊 複数回答集計: {q_title}（ターゲットA vs ターゲットB）"
         )
-        test_df["回答"] = np.where(
-            test_df["回答コード"].isin(focus_choices),
-            target_lbl,
-            f"その他（{target_lbl}以外）",
+
+        col_data = df_active[verify_q].fillna("").astype(str)
+        # カンマで展開してダミー変数化
+        dum_all = col_data.str.get_dummies(sep=",")
+
+        # ターゲットAとBの集計
+        dum_A = dum_all.loc[idx_A]
+        dum_B = dum_all.loc[idx_B]
+
+        # 表示対象の選択肢
+        target_opts = (
+            focus_choices
+            if focus_choices
+            else [k for k in choices.keys() if k in dum_all.columns]
         )
+        if not target_opts:
+          target_opts = [
+              c for c in dum_all.columns if c not in ["0", "", "nan"]
+          ]
+
+        ml_records = []
+        for opt in target_opts:
+          label = choices.get(opt, f"コード_{opt}")
+          cnt_A = dum_A[opt].sum() if opt in dum_A else 0
+          cnt_B = dum_B[opt].sum() if opt in dum_B else 0
+
+          pct_A = (cnt_A / len(idx_A)) * 100 if len(idx_A) > 0 else 0
+          pct_B = (cnt_B / len(idx_B)) * 100 if len(idx_B) > 0 else 0
+          diff = pct_A - pct_B
+
+          ml_records.append({
+              "回答・選択肢": label,
+              f"ターゲット A (%) [n={len(idx_A):,}]": round(pct_A, 1),
+              f"ターゲット B (%) [n={len(idx_B):,}]": round(pct_B, 1),
+              "比率差 (%pt)": round(diff, 1),
+          })
+
+        df_ml_disp = pd.DataFrame(ml_records).sort_values(
+            by="比率差 (%pt)", ascending=False
+        )
+        st.dataframe(df_ml_disp.set_index("回答・選択肢"))
+
+      # === 単一回答 (S, SL, M) の場合 ===
       else:
-        disp_df["回答"] = disp_df["回答コード"].map(choices)
-        test_df["回答"] = test_df["回答コード"].map(choices)
-
-      # 画面表示用の比率クロス集計表
-      if len(disp_df["回答"].unique()) > 1:
-        ct_pct = (
-            pd.crosstab(disp_df["グループ"], disp_df["回答"], normalize="index")
-            * 100
+        st.markdown(
+            f"#### 📊 クロス集計結果: {q_title}（ターゲットA vs ターゲットB）"
         )
-        st.dataframe(ct_pct.round(1))
 
-        # カイ二乗検定の実行（test_df の度数表で計算）
-        ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
-        try:
-          chi2, p_val, dof, _ = chi2_contingency(ct_test)
-          test_stat = float(chi2)
-          m1, m2, m3 = st.columns(3)
-          m1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
-          m2.metric(
-              "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
+        # 表表示用のデータ作成
+        df_disp_A = pd.DataFrame({
+            "グループ": "ターゲット A",
+            "回答コード": df_active.loc[idx_A, verify_q],
+        })
+        df_disp_B = pd.DataFrame({
+            "グループ": "ターゲット B (参照全体)",
+            "回答コード": df_active.loc[idx_B, verify_q],
+        })
+        disp_df = (
+            pd.concat([df_disp_A, df_disp_B], ignore_index=True)
+            .dropna()
+            .reset_index(drop=True)
+        )
+        disp_df = disp_df[disp_df["回答コード"].isin(choices.keys())]
+
+        # 検定用のデータ作成
+        idx_test_B = idx_B_pure if is_subset else idx_B
+        df_test_A = pd.DataFrame(
+            {"グループ": "A", "回答コード": df_active.loc[idx_A, verify_q]}
+        )
+        df_test_B = pd.DataFrame({
+            "グループ": "B_other",
+            "回答コード": df_active.loc[idx_test_B, verify_q],
+        })
+        test_df = (
+            pd.concat([df_test_A, df_test_B], ignore_index=True)
+            .dropna()
+            .reset_index(drop=True)
+        )
+        test_df = test_df[test_df["回答コード"].isin(choices.keys())]
+
+        # 回答のラベル付け（注目回答があれば2値化）
+        if focus_choices:
+          labels = [choices.get(c, c) for c in focus_choices]
+          target_lbl = " / ".join(labels)
+          disp_df["回答"] = np.where(
+              disp_df["回答コード"].isin(focus_choices),
+              target_lbl,
+              f"その他（{target_lbl}以外）",
           )
-          is_sig = p_val < 0.05
-          is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
-          m3.metric(
-              "検定結果 (カイ二乗)",
-              is_sig_str,
-              delta="有意" if is_sig else "なし",
+          test_df["回答"] = np.where(
+              test_df["回答コード"].isin(focus_choices),
+              target_lbl,
+              f"その他（{target_lbl}以外）",
           )
-        except Exception:
-          st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
-      else:
-        st.warning("集計に必要なバリエーションが不足しています。")
+        else:
+          disp_df["回答"] = disp_df["回答コード"].map(choices)
+          test_df["回答"] = test_df["回答コード"].map(choices)
+
+        # 画面表示用の比率クロス集計表
+        if len(disp_df["回答"].unique()) > 1:
+          ct_pct = (
+              pd.crosstab(
+                  disp_df["グループ"], disp_df["回答"], normalize="index"
+              )
+              * 100
+          )
+          st.dataframe(ct_pct.round(1))
+
+          # カイ二乗検定の実行（test_df の度数表で計算）
+          ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
+          try:
+            chi2, p_val, dof, _ = chi2_contingency(ct_test)
+            test_stat = float(chi2)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
+            m2.metric(
+                "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
+            )
+            is_sig = p_val < 0.05
+            is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
+            m3.metric(
+                "検定結果 (カイ二乗)",
+                is_sig_str,
+                delta="有意" if is_sig else "なし",
+            )
+          except Exception:
+            st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
+        else:
+          st.warning("集計に必要なバリエーションが不足しています。")
 
 # --- 7. スプレッドシート保存 ---
 st.divider()
