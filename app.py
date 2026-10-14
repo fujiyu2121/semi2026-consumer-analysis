@@ -14,9 +14,6 @@ st.set_page_config(
 TYPE4_JSON = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "type4_keys.json"
 )
-CLUSTER0_JSON = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "cluster0_keys.json"
-)
 
 
 @st.cache_data
@@ -28,17 +25,7 @@ def load_type4_keys():
   return set()
 
 
-@st.cache_data
-def load_cluster0_keys():
-  if os.path.exists(CLUSTER0_JSON):
-    with open(CLUSTER0_JSON, "r", encoding="utf-8") as f:
-      keys = json.load(f)
-    return set(keys)
-  return set()
-
-
 type4_keys = load_type4_keys()
-cluster0_keys = load_cluster0_keys()
 
 
 # --- 1. 合言葉認証 ---
@@ -99,9 +86,9 @@ st.caption(f"母集団全体 N = {total_n:,}人 ｜ ログイン中: {st.session
 # --- 3. セッションステート初期化（条件IDの動的管理） ---
 for grp in ["A", "B"]:
   if f"cond_ids_{grp}" not in st.session_state:
-    st.session_state[f"cond_ids_{grp}"] = [1, 2]
+    st.session_state[f"cond_ids_{grp}"] = [1]
   if f"next_id_{grp}" not in st.session_state:
-    st.session_state[f"next_id_{grp}"] = 3
+    st.session_state[f"next_id_{grp}"] = 2
 
 
 def add_condition(grp):
@@ -110,19 +97,18 @@ def add_condition(grp):
 
 
 def remove_condition(grp, cid):
-  if len(st.session_state[f"cond_ids_{grp}"]) > 1:
+  if len(st.session_state[f"cond_ids_{grp}"]) > 0:
     st.session_state[f"cond_ids_{grp}"].remove(cid)
 
 
 def render_condition(grp, cid, display_idx):
   h_col, del_col = st.columns([4, 1])
   with h_col:
-    st.markdown(f"**条件 {display_idx}**")
+    st.markdown(f"**絞り込み条件 {display_idx}**")
   with del_col:
-    if len(st.session_state[f"cond_ids_{grp}"]) > 1:
-      if st.button("🗑️", key=f"del_{grp}_{cid}", help="この条件を削除"):
-        remove_condition(grp, cid)
-        st.rerun()
+    if st.button("🗑️", key=f"del_{grp}_{cid}", help="この条件を削除"):
+      remove_condition(grp, cid)
+      st.rerun()
 
   sel_cat = st.selectbox(
       f"大分類 ({grp}-{display_idx})",
@@ -169,57 +155,57 @@ st.subheader("🎯 1. 比較する2つのターゲットを設定")
 col_grp_a, col_grp_b = st.columns(2)
 
 PRESET_OPTIONS = [
-    "自由条件（設問から指定）",
-    f"【プリセット】クラスター0（コア層: {len(cluster0_keys):,}人）",
     f"【プリセット】クラスタ4（U30: {len(type4_keys):,}人）",
     "【プリセット】30歳以下全体（U30）",
+    "自由条件（ゼロから設問で指定）",
 ]
 
+# === ターゲット A 設定 ===
 active_conditions_A = []
 with col_grp_a:
   st.markdown("### 🅰️ ターゲット A")
   target_a_mode = st.radio(
-      "ターゲットAの指定方法",
-      PRESET_OPTIONS,
-      index=1,  # 初期値を「クラスター0」に設定
-      key="target_a_mode",
+      "ベースターゲットの選択 (A)", PRESET_OPTIONS, key="target_a_mode"
   )
 
-  if target_a_mode == "自由条件（設問から指定）":
-    for idx, cid in enumerate(st.session_state["cond_ids_A"], start=1):
-      q_code, cond_val = render_condition("A", cid, idx)
-      if q_code and cond_val:
-        active_conditions_A.append((q_code, cond_val))
-    st.button("➕ 条件を追加 (A)", on_click=add_condition, args=("A",))
-  elif "クラスター0" in target_a_mode:
-    st.success(f"🎯 クラスター0（コア層）を選択中: {len(cluster0_keys):,} 人")
-  elif "クラスタ4" in target_a_mode:
-    st.success(f"🎯 クラスタ4を選択中: {len(type4_keys):,} 人")
+  if "クラスタ4" in target_a_mode:
+    st.success(f"🎯 ベース: クラスタ4 ({len(type4_keys):,}人)")
+  elif "30歳以下全体" in target_a_mode:
+    st.info("👥 ベース: 30歳以下全体")
   else:
-    st.info("👥 30歳以下全体を選択中")
+    st.caption("🛠️ 設問条件を組み合わせて自由に指定します")
 
+  st.markdown("**▼ 追加の絞り込み条件（任意）**")
+  for idx, cid in enumerate(st.session_state["cond_ids_A"], start=1):
+    q_code, cond_val = render_condition("A", cid, idx)
+    if q_code and cond_val:
+      active_conditions_A.append((q_code, cond_val))
+  st.button("➕ 絞り込み条件を追加 (A)", on_click=add_condition, args=("A",))
+
+# === ターゲット B 設定 ===
 active_conditions_B = []
 with col_grp_b:
   st.markdown("### 🅱️ ターゲット B（対照群）")
   target_b_mode = st.radio(
-      "ターゲットBの指定方法",
+      "ベースターゲットの選択 (B)",
       PRESET_OPTIONS,
-      index=3,  # 初期値を「30歳以下全体」に設定
+      index=1,  # 初期値を「30歳以下全体」に
       key="target_b_mode",
   )
 
-  if target_b_mode == "自由条件（設問から指定）":
-    for idx, cid in enumerate(st.session_state["cond_ids_B"], start=1):
-      q_code, cond_val = render_condition("B", cid, idx)
-      if q_code and cond_val:
-        active_conditions_B.append((q_code, cond_val))
-    st.button("➕ 条件を追加 (B)", on_click=add_condition, args=("B",))
-  elif "クラスター0" in target_b_mode:
-    st.success(f"🎯 クラスター0（コア層）を選択中: {len(cluster0_keys):,} 人")
-  elif "クラスタ4" in target_b_mode:
-    st.success(f"🎯 クラスタ4を選択中: {len(type4_keys):,} 人")
+  if "クラスタ4" in target_b_mode:
+    st.success(f"🎯 ベース: クラスタ4 ({len(type4_keys):,}人)")
+  elif "30歳以下全体" in target_b_mode:
+    st.info("👥 ベース: 30歳以下全体")
   else:
-    st.info("👥 30歳以下全体を選択中")
+    st.caption("🛠️ 設問条件を組み合わせて自由に指定します")
+
+  st.markdown("**▼ 追加の絞り込み条件（任意）**")
+  for idx, cid in enumerate(st.session_state["cond_ids_B"], start=1):
+    q_code, cond_val = render_condition("B", cid, idx)
+    if q_code and cond_val:
+      active_conditions_B.append((q_code, cond_val))
+  st.button("➕ 絞り込み条件を追加 (B)", on_click=add_condition, args=("B",))
 
 # --- 5. 検証質問の選択 ---
 st.divider()
@@ -269,7 +255,7 @@ df_active = load_selected_columns(needed_cols)
 df_active["KEY"] = df_active["KEY"].astype(str)
 
 
-# マスク作成関数（複数回答の包含判定に対応）
+# 複数回答の包含判定に対応したマスク作成
 def make_mask(conds, df):
   mask = pd.Series(True, index=df.index)
   summary = []
@@ -295,45 +281,47 @@ def make_mask(conds, df):
   return mask, summary
 
 
-# ターゲットAのマスク作成
-if "クラスター0" in target_a_mode:
-  mask_A = df_active["KEY"].isin(cluster0_keys)
-  summary_A = ["クラスター0 (コア層)"]
-elif "クラスタ4" in target_a_mode:
-  mask_A = df_active["KEY"].isin(type4_keys)
-  summary_A = ["クラスタ4 (U30)"]
-elif "30歳以下全体" in target_a_mode:
-  mask_A = pd.to_numeric(df_active["AAF2"], errors="coerce") <= 30
-  summary_A = ["30歳以下全体"]
-else:
-  mask_A, summary_A = make_mask(active_conditions_A, df_active)
+# ベースマスク + 追加絞り込みマスクの結合関数
+def build_final_mask(mode_str, conds, df):
+  summary = []
+  if "クラスタ4" in mode_str:
+    base_mask = df["KEY"].isin(type4_keys)
+    summary.append("クラスタ4")
+  elif "30歳以下全体" in mode_str:
+    base_mask = pd.to_numeric(df["AAF2"], errors="coerce") <= 30
+    summary.append("30歳以下全体")
+  else:
+    base_mask = pd.Series(True, index=df.index)
 
-# ターゲットBのマスク作成
-if "クラスター0" in target_b_mode:
-  mask_B = df_active["KEY"].isin(cluster0_keys)
-  summary_B = ["クラスター0 (コア層)"]
-elif "クラスタ4" in target_b_mode:
-  mask_B = df_active["KEY"].isin(type4_keys)
-  summary_B = ["クラスタ4 (U30)"]
-elif "30歳以下全体" in target_b_mode:
-  mask_B = pd.to_numeric(df_active["AAF2"], errors="coerce") <= 30
-  summary_B = ["30歳以下全体"]
-else:
-  mask_B, summary_B = make_mask(active_conditions_B, df_active)
+  add_mask, add_sum = make_mask(conds, df)
+  final_mask = base_mask & add_mask
+  summary.extend(add_sum)
+  return final_mask, summary
+
+
+mask_A, summary_A = build_final_mask(
+    target_a_mode, active_conditions_A, df_active
+)
+mask_B, summary_B = build_final_mask(
+    target_b_mode, active_conditions_B, df_active
+)
 
 nA = int(mask_A.sum())
 nB = int(mask_B.sum())
 
+desc_A = " ＆ ".join(summary_A) if summary_A else "全数"
+desc_B = " ＆ ".join(summary_B) if summary_B else "全数"
+
 info_col1, info_col2 = st.columns(2)
 with info_col1:
   st.info(
-      f"🅰️ **ターゲット A 規模**\n\n・人数: **{nA:,} 人** ("
-      f" {(nA/total_n)*100:.2f}%)"
+      f"🅰️ **ターゲット A 規模**\n\n・定義: **{desc_A}**\n・人数:"
+      f" **{nA:,} 人** ( {(nA/total_n)*100:.2f}%)"
   )
 with info_col2:
   st.info(
-      f"🅱️ **ターゲット B 規模**\n\n・人数: **{nB:,} 人** ("
-      f" {(nB/total_n)*100:.2f}%)"
+      f"🅱️ **ターゲット B 規模**\n\n・定義: **{desc_B}**\n・人数:"
+      f" **{nB:,} 人** ( {(nB/total_n)*100:.2f}%)"
   )
 
 test_stat, p_val = 0.0, 1.0
@@ -423,7 +411,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         col_data = df_active[verify_q].fillna("").astype(str)
         idx_test_B = idx_B_pure if is_subset else idx_B
 
-        # ケース1: 「注目する回答」が指定されている場合
+        # ケース1: 「注目する回答」が指定されている場合（例: コンビニで買う人 vs 買わない人）
         if focus_choices:
           target_labels = [choices.get(c, c) for c in focus_choices]
           target_name = " / ".join(target_labels)
@@ -474,6 +462,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           )
           st.dataframe(ct_pct.round(1), use_container_width=True)
 
+          # 2×2 カイ二乗検定
           ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
           try:
             chi2, p_v, _, _ = chi2_contingency(ct_test)
@@ -495,7 +484,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           except Exception:
             st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
 
-        # ケース2: 注目回答が未指定の場合（全選択肢の選択率一覧表 & 各カイ二乗検定）
+        # ケース2: 注目回答が未指定の場合（全選択肢一覧表 & 各カイ二乗検定）
         else:
           st.markdown(
               f"#### 📊 複数回答 全項目比較 ＆ カイ二乗検定: {q_title}"
@@ -523,6 +512,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
             pct_B = (cnt_B / len(idx_B)) * 100 if len(idx_B) > 0 else 0
             diff = pct_A - pct_B
 
+            # 各選択肢ごとの 2×2 カイ二乗検定
             c_A_1 = cnt_A
             c_A_0 = len(idx_A) - cnt_A
             c_B_1 = dum_B_test[opt].sum() if opt in dum_B_test else 0
@@ -654,9 +644,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
 st.divider()
 st.subheader("📋 3. 班のスプレッドシートに保存")
 GAS_URL = "https://script.google.com/macros/s/AKfycby2qTjYVCz99zAtGx19DF4M1wkm0MTKoM417CpUpBPRytS18vSQpILcliYbFmm7-2Vugg/exec"
-
-desc_A = " ＆ ".join(summary_A) if summary_A else "全数"
-desc_B = " ＆ ".join(summary_B) if summary_B else "全数"
 
 record_q = q_title
 if focus_choices:
