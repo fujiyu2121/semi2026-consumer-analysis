@@ -1,7 +1,6 @@
-# app.py 冒頭
 import json
 import os
-import re  # ← ここを追加
+import re
 import numpy as np
 import pandas as pd
 import requests
@@ -87,7 +86,7 @@ st.caption(f"母集団全体 N = {total_n:,}人 ｜ ログイン中: {st.session
 # --- 3. セッションステート初期化（条件IDの動的管理） ---
 for grp in ["A", "B"]:
   if f"cond_ids_{grp}" not in st.session_state:
-    st.session_state[f"cond_ids_{grp}"] = [1, 2]  # 初期は2個ずつ
+    st.session_state[f"cond_ids_{grp}"] = [1, 2]
   if f"next_id_{grp}" not in st.session_state:
     st.session_state[f"next_id_{grp}"] = 3
 
@@ -102,7 +101,6 @@ def remove_condition(grp, cid):
     st.session_state[f"cond_ids_{grp}"].remove(cid)
 
 
-# 条件セレクターUI関数
 def render_condition(grp, cid, display_idx):
   h_col, del_col = st.columns([4, 1])
   with h_col:
@@ -159,7 +157,7 @@ col_grp_a, col_grp_b = st.columns(2)
 
 PRESET_OPTIONS = [
     "自由条件（設問から指定）",
-    f"【プリセット】タイプ4潜在層（U30: {len(type4_keys):,}人）",
+    f"【プリセット】クラスタ4（U30: {len(type4_keys):,}人）",
     "【プリセット】30歳以下全体（U30）",
 ]
 
@@ -176,8 +174,8 @@ with col_grp_a:
       if q_code and cond_val:
         active_conditions_A.append((q_code, cond_val))
     st.button("➕ 条件を追加 (A)", on_click=add_condition, args=("A",))
-  elif "タイプ4潜在層" in target_a_mode:
-    st.success(f"🎯 タイプ4潜在層を選択中: {len(type4_keys):,} 人")
+  elif "クラスタ4" in target_a_mode:
+    st.success(f"🎯 クラスタ4を選択中: {len(type4_keys):,} 人")
   else:
     st.info("👥 30歳以下全体を選択中")
 
@@ -197,8 +195,8 @@ with col_grp_b:
       if q_code and cond_val:
         active_conditions_B.append((q_code, cond_val))
     st.button("➕ 条件を追加 (B)", on_click=add_condition, args=("B",))
-  elif "タイプ4潜在層" in target_b_mode:
-    st.success(f"🎯 タイプ4潜在層を選択中: {len(type4_keys):,} 人")
+  elif "クラスタ4" in target_b_mode:
+    st.success(f"🎯 クラスタ4を選択中: {len(type4_keys):,} 人")
   else:
     st.info("👥 30歳以下全体を選択中")
 
@@ -231,14 +229,15 @@ if verify_q:
 
   if not is_verify_numeric and len(choices) > 0:
     focus_choices = st.multiselect(
-        "③ 注目する回答を選択（任意：選択すると該当回答 vs それ以外に2値化されます）",
+        "③ 注目する回答を選択（選択すると「この選択肢を選んだ人 vs"
+        " 選んでいない人」の2値クロス集計＆カイ二乗検定になります）",
         options=list(choices.keys()),
         format_func=lambda c: choices.get(c, c),
         key=f"focus_{verify_q}",
     )
 
 # --- 6. オンデマンド読み込みと集計 ---
-needed_cols = ["KEY", "AAF2"]  # KEYと年齢列は常に保持
+needed_cols = ["KEY", "AAF2"]
 needed_cols += [c[0] for c in active_conditions_A] + [
     c[0] for c in active_conditions_B
 ]
@@ -262,15 +261,12 @@ def make_mask(conds, df):
         summary.append(f"{questions[q_code]['title']}: {val[0]}〜{val[1]}")
       else:
         if val:
-          # 複数回答（カンマ区切り）でも「その選択肢を含んでいる」人を確実に拾う
-          # 正規表現で「行頭またはカンマ」+ 値 +「行末またはカンマ」を判定
           pattern = "|".join([rf"(?:^|,){re.escape(str(v))}(?:,|$)" for v in val])
           mask &= (
               df[q_code]
               .astype(str)
               .str.contains(pattern, regex=True, na=False)
           )
-
           labels = [questions[q_code]["choices"].get(v, v) for v in val]
           summary.append(
               f"{questions[q_code]['title']}: {', '.join(labels)}"
@@ -279,9 +275,9 @@ def make_mask(conds, df):
 
 
 # ターゲットAのマスク作成
-if "タイプ4潜在層" in target_a_mode:
+if "クラスタ4" in target_a_mode:
   mask_A = df_active["KEY"].isin(type4_keys)
-  summary_A = ["タイプ4潜在層 (U30)"]
+  summary_A = ["クラスタ4 (U30)"]
 elif "30歳以下全体" in target_a_mode:
   mask_A = pd.to_numeric(df_active["AAF2"], errors="coerce") <= 30
   summary_A = ["30歳以下全体"]
@@ -289,9 +285,9 @@ else:
   mask_A, summary_A = make_mask(active_conditions_A, df_active)
 
 # ターゲットBのマスク作成
-if "タイプ4潜在層" in target_b_mode:
+if "クラスタ4" in target_b_mode:
   mask_B = df_active["KEY"].isin(type4_keys)
-  summary_B = ["タイプ4潜在層 (U30)"]
+  summary_B = ["クラスタ4 (U30)"]
 elif "30歳以下全体" in target_b_mode:
   mask_B = pd.to_numeric(df_active["AAF2"], errors="coerce") <= 30
   summary_B = ["30歳以下全体"]
@@ -301,7 +297,6 @@ else:
 nA = int(mask_A.sum())
 nB = int(mask_B.sum())
 
-# 規模サマリー
 info_col1, info_col2 = st.columns(2)
 with info_col1:
   st.info(
@@ -318,7 +313,6 @@ test_stat, p_val = 0.0, 1.0
 q_title = ""
 is_sig_str = "有意差なし"
 
-# 集計実行
 if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
   q_info = questions[verify_q]
   q_title = q_info["title"]
@@ -327,22 +321,18 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
       q_info.get("type") == "NUM" or len(choices) == 0 or verify_q == "AAF2"
   )
 
-  # サンプルのインデックス整理
   idx_A = df_active[mask_A].index
   idx_B = df_active[mask_B].index
 
-  # 重複（AかつB）と、BのうちA以外（B - A）の抽出
   idx_overlap = df_active[mask_A & mask_B].index
   idx_B_pure = df_active[mask_B & ~mask_A].index
-
-  # 比較・検定用グループの定義
   is_subset = len(idx_overlap) > 0
 
   if is_subset:
     st.caption(
         f"💡 **サンプル関係性**: ターゲットA（{nA:,}人）とターゲットB（{nB:,}人）に"
         f" {len(idx_overlap):,} 人の重複があります。"
-        f" クロス集計表には指定通りの両群を表示し、統計検定はサンプルの独立性を保つため「ターゲットA」vs「ターゲットBのうちA以外（{len(idx_B_pure):,}人）」で計算しています。"
+        f" クロス集計表には両群の全数を表示し、統計検定はサンプルの独立性を保つため「ターゲットA」vs「ターゲットBのうちA以外（{len(idx_B_pure):,}人）」で計算しています。"
     )
 
   if len(idx_A) == 0 or (is_subset and len(idx_B_pure) == 0):
@@ -358,9 +348,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
       s_num = pd.to_numeric(df_active[verify_q], errors="coerce")
       vals_A = s_num.loc[idx_A].dropna()
       vals_B = s_num.loc[idx_B].dropna()
-      vals_B_test = (
-          s_num.loc[idx_B_pure].dropna() if is_subset else vals_B
-      )  # 検定用
+      vals_B_test = s_num.loc[idx_B_pure].dropna() if is_subset else vals_B
 
       if len(vals_A) > 0 and len(vals_B) > 0 and len(vals_B_test) > 0:
         res_df = pd.DataFrame(
@@ -376,7 +364,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         )
         st.dataframe(res_df.round(2))
 
-        # Welchのt検定（重複を除いた群と比較）
         t_res = ttest_ind(vals_A, vals_B_test, equal_var=False)
         test_stat = float(t_res.statistic)
         p_val = float(t_res.pvalue)
@@ -393,7 +380,7 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         )
 
     # ----------------------------------------------------
-    # パターン2: カテゴリ尺度 / 複数回答
+    # パターン2: カテゴリ尺度 / 複数回答（カイ二乗検定）
     # ----------------------------------------------------
     else:
       q_type = str(q_info.get("type", "S")).upper()
@@ -402,60 +389,163 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           or df_active[verify_q].astype(str).str.contains(",").any()
       )
 
-      # === 複数回答 (ML) の場合 ===
+      # ====================================================
+      # 2-A. 複数回答 (ML) の場合
+      # ====================================================
       if is_ml:
-        st.markdown(
-            f"#### 📊 複数回答集計: {q_title}（ターゲットA vs ターゲットB）"
-        )
-
         col_data = df_active[verify_q].fillna("").astype(str)
-        # カンマで展開してダミー変数化
-        dum_all = col_data.str.get_dummies(sep=",")
+        idx_test_B = idx_B_pure if is_subset else idx_B
 
-        # ターゲットAとBの集計
-        dum_A = dum_all.loc[idx_A]
-        dum_B = dum_all.loc[idx_B]
+        # ケース1: 「注目する回答」が指定されている場合（例: コンビニで買う人 vs 買わない人）
+        if focus_choices:
+          target_labels = [choices.get(c, c) for c in focus_choices]
+          target_name = " / ".join(target_labels)
 
-        # 表示対象の選択肢
-        target_opts = (
-            focus_choices
-            if focus_choices
-            else [k for k in choices.keys() if k in dum_all.columns]
-        )
-        if not target_opts:
-          target_opts = [
-              c for c in dum_all.columns if c not in ["0", "", "nan"]
+          st.markdown(
+              f"#### 📊 「{target_name}」の選択有無クロス集計 ＆ カイ二乗検定"
+          )
+
+          pattern = "|".join(
+              [rf"(?:^|,){re.escape(str(v))}(?:,|$)" for v in focus_choices]
+          )
+          is_selected = col_data.str.contains(pattern, regex=True, na=False)
+
+          disp_idx_all = [
+              i for i in df_active.index if i in idx_A or i in idx_B
           ]
-
-        ml_records = []
-        for opt in target_opts:
-          label = choices.get(opt, f"コード_{opt}")
-          cnt_A = dum_A[opt].sum() if opt in dum_A else 0
-          cnt_B = dum_B[opt].sum() if opt in dum_B else 0
-
-          pct_A = (cnt_A / len(idx_A)) * 100 if len(idx_A) > 0 else 0
-          pct_B = (cnt_B / len(idx_B)) * 100 if len(idx_B) > 0 else 0
-          diff = pct_A - pct_B
-
-          ml_records.append({
-              "回答・選択肢": label,
-              f"ターゲット A (%) [n={len(idx_A):,}]": round(pct_A, 1),
-              f"ターゲット B (%) [n={len(idx_B):,}]": round(pct_B, 1),
-              "比率差 (%pt)": round(diff, 1),
+          disp_df = pd.DataFrame({
+              "グループ": [
+                  "ターゲット A" if i in idx_A else "ターゲット B (参照全体)"
+                  for i in disp_idx_all
+              ],
+              "回答": np.where(
+                  is_selected.loc[disp_idx_all],
+                  f"{target_name} を選択した",
+                  f"{target_name} を選択していない",
+              ),
           })
 
-        df_ml_disp = pd.DataFrame(ml_records).sort_values(
-            by="比率差 (%pt)", ascending=False
-        )
-        st.dataframe(df_ml_disp.set_index("回答・選択肢"))
+          test_idx_all = [
+              i for i in df_active.index if i in idx_A or i in idx_test_B
+          ]
+          test_df = pd.DataFrame({
+              "グループ": [
+                  "A" if i in idx_A else "B_other" for i in test_idx_all
+              ],
+              "回答": np.where(
+                  is_selected.loc[test_idx_all],
+                  "1_Selected",
+                  "0_NotSelected",
+              ),
+          })
 
-      # === 単一回答 (S, SL, M) の場合 ===
+          ct_pct = (
+              pd.crosstab(
+                  disp_df["グループ"], disp_df["回答"], normalize="index"
+              )
+              * 100
+          )
+          st.dataframe(ct_pct.round(1), use_container_width=True)
+
+          # 2×2 カイ二乗検定
+          ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
+          try:
+            chi2, p_v, _, _ = chi2_contingency(ct_test)
+            test_stat = float(chi2)
+            p_val = float(p_v)
+            is_sig = p_val < 0.05
+            is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
+            m2.metric(
+                "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
+            )
+            m3.metric(
+                "検定結果 (カイ二乗)",
+                is_sig_str,
+                delta="有意" if is_sig else "なし",
+            )
+          except Exception:
+            st.info("※度数分布の偏りによりカイ二乗検定を実行できませんでした。")
+
+        # ケース2: 注目回答が未指定の場合（全選択肢の選択率一覧表 & 各カイ二乗検定）
+        else:
+          st.markdown(
+              f"#### 📊 複数回答 全項目比較 ＆ カイ二乗検定: {q_title}"
+          )
+          dum_all = col_data.str.get_dummies(sep=",")
+          dum_A = dum_all.loc[idx_A]
+          dum_B = dum_all.loc[idx_B]
+          dum_B_test = dum_all.loc[idx_test_B]
+
+          target_opts = [k for k in choices.keys() if k in dum_all.columns]
+          if not target_opts:
+            target_opts = [
+                c for c in dum_all.columns if c not in ["0", "", "nan"]
+            ]
+
+          ml_records = []
+          primary_set = False
+
+          for opt in target_opts:
+            label = choices.get(opt, f"コード_{opt}")
+            cnt_A = dum_A[opt].sum() if opt in dum_A else 0
+            cnt_B = dum_B[opt].sum() if opt in dum_B else 0
+
+            pct_A = (cnt_A / len(idx_A)) * 100 if len(idx_A) > 0 else 0
+            pct_B = (cnt_B / len(idx_B)) * 100 if len(idx_B) > 0 else 0
+            diff = pct_A - pct_B
+
+            # 各選択肢ごとの 2×2 カイ二乗検定
+            c_A_1 = cnt_A
+            c_A_0 = len(idx_A) - cnt_A
+            c_B_1 = dum_B_test[opt].sum() if opt in dum_B_test else 0
+            c_B_0 = len(dum_B_test) - c_B_1
+
+            table_2x2 = [[c_A_1, c_A_0], [c_B_1, c_B_0]]
+            try:
+              chi2, p_v, _, _ = chi2_contingency(table_2x2)
+              sig_mark = "あり (p<0.05)" if p_v < 0.05 else "なし"
+              chi2_str = f"{chi2:.2f}"
+              pv_str = f"{p_v:.4e}" if p_v < 0.0001 else f"{p_v:.4f}"
+            except Exception:
+              chi2, p_v = 0.0, 1.0
+              sig_mark = "計算不可"
+              chi2_str, pv_str = "-", "-"
+
+            if not primary_set:
+              test_stat, p_val = float(chi2), float(p_v)
+              is_sig_str = (
+                  "有意差あり (p<0.05)" if p_val < 0.05 else "有意差なし"
+              )
+              primary_set = True
+
+            ml_records.append({
+                "回答・選択肢": label,
+                f"ターゲット A (%) [n={len(idx_A):,}]": round(pct_A, 1),
+                f"ターゲット B (%) [n={len(idx_B):,}]": round(pct_B, 1),
+                "比率差 (%pt)": round(diff, 1),
+                "カイ二乗値 (χ²)": chi2_str,
+                "p値": pv_str,
+                "有意差": sig_mark,
+            })
+
+          df_ml_disp = pd.DataFrame(ml_records).sort_values(
+              by="比率差 (%pt)", ascending=False
+          )
+          st.dataframe(
+              df_ml_disp.set_index("回答・選択肢"), use_container_width=True
+          )
+
+      # ====================================================
+      # 2-B. 単一回答 (S, SL, M) の場合
+      # ====================================================
       else:
         st.markdown(
             f"#### 📊 クロス集計結果: {q_title}（ターゲットA vs ターゲットB）"
         )
 
-        # 表表示用のデータ作成
         df_disp_A = pd.DataFrame({
             "グループ": "ターゲット A",
             "回答コード": df_active.loc[idx_A, verify_q],
@@ -471,7 +561,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         )
         disp_df = disp_df[disp_df["回答コード"].isin(choices.keys())]
 
-        # 検定用のデータ作成
         idx_test_B = idx_B_pure if is_subset else idx_B
         df_test_A = pd.DataFrame(
             {"グループ": "A", "回答コード": df_active.loc[idx_A, verify_q]}
@@ -487,7 +576,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
         )
         test_df = test_df[test_df["回答コード"].isin(choices.keys())]
 
-        # 回答のラベル付け（注目回答があれば2値化）
         if focus_choices:
           labels = [choices.get(c, c) for c in focus_choices]
           target_lbl = " / ".join(labels)
@@ -505,7 +593,6 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
           disp_df["回答"] = disp_df["回答コード"].map(choices)
           test_df["回答"] = test_df["回答コード"].map(choices)
 
-        # 画面表示用の比率クロス集計表
         if len(disp_df["回答"].unique()) > 1:
           ct_pct = (
               pd.crosstab(
@@ -513,20 +600,22 @@ if verify_q and verify_q in df_active.columns and nA > 0 and nB > 0:
               )
               * 100
           )
-          st.dataframe(ct_pct.round(1))
+          st.dataframe(ct_pct.round(1), use_container_width=True)
 
-          # カイ二乗検定の実行（test_df の度数表で計算）
+          # カイ二乗検定
           ct_test = pd.crosstab(test_df["グループ"], test_df["回答"])
           try:
-            chi2, p_val, dof, _ = chi2_contingency(ct_test)
+            chi2, p_v, dof, _ = chi2_contingency(ct_test)
             test_stat = float(chi2)
+            p_val = float(p_v)
+            is_sig = p_val < 0.05
+            is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
+
             m1, m2, m3 = st.columns(3)
             m1.metric("カイ二乗値 (χ²)", f"{test_stat:.2f}")
             m2.metric(
                 "p値", f"{p_val:.4e}" if p_val < 0.0001 else f"{p_val:.4f}"
             )
-            is_sig = p_val < 0.05
-            is_sig_str = "有意差あり (p<0.05)" if is_sig else "有意差なし"
             m3.metric(
                 "検定結果 (カイ二乗)",
                 is_sig_str,
@@ -567,10 +656,16 @@ if st.button("この比較結果をスプレッドシートに追記する"):
         "is_significant": is_sig_str,
     }
     try:
-      res = requests.post(GAS_URL, json=payload, timeout=5)
+      # タイムアウトを15秒に設定
+      res = requests.post(GAS_URL, json=payload, timeout=15)
       if res.status_code == 200:
         st.success("🎉 スプレッドシートに比較結果が記録されました！")
       else:
         st.error(f"送信エラー: {res.status_code}")
+    except requests.exceptions.Timeout:
+      st.warning(
+          "⚠️ サーバーの応答に時間がかかっていますが、スプレッドシート側で記録されている可能性があります。"
+          " 少し待ってからシートを確認してください。"
+      )
     except Exception as e:
       st.error(f"通信エラー: {e}")
